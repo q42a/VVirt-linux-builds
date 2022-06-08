@@ -1,0 +1,8 @@
+Linux is provided under the terms of the GNU General Public License version 2
+only, with an explicit syscall exception. See LICENSES/linux_license.
+
+get-verified-tarball is provided under the terms of the GNU General Public
+License version 2 only. See LICENSES/gpl-2.0.
+
+Everything else is provided under the terms of the 0BSD license. See
+LICENSES/license.

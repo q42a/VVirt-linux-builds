@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: 0BSD
+# Copyright © 2021-2022 Stephen Larew
+
+set -e
+
+[ "${VVIRTLINUX:=$1}" ] || { echo "VVIRTLINUX missing"; exit 1; }
+
+# get latest stable release
+LINUXVERSION=$(curl -sL 'https://www.kernel.org/finger_banner' | grep 'latest stable version' | awk -F: '{gsub(/ /,"", $0); print $2}')
+
+# get-verified-tarball: needs gpgv2
+# linux: use gcc 10 for build
+# sign with minisign
+sudo add-apt-repository ppa:savoury1/minisign
+sudo apt-get update
+sudo apt install gpgv2 gcc-10-aarch64-linux-gnu minisign
+sudo update-alternatives \
+  --install /usr/bin/aarch64-linux-gnu-gcc aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-gnu-gcc-10 100 \
+  --slave /usr/bin/aarch64-linux-gnu-cpp aarch64-linux-gnu-cpp /usr/bin/aarch64-linux-gnu-cpp-10 \
+  --slave /usr/bin/aarch64-linux-gnu-gcc-ar aarch64-linux-gnu-gcc-ar /usr/bin/aarch64-linux-gnu-gcc-ar-10 \
+  --slave /usr/bin/aarch64-linux-gnu-gcc-nm aarch64-linux-gnu-gcc-nm /usr/bin/aarch64-linux-gnu-gcc-nm-10 \
+  --slave /usr/bin/aarch64-linux-gnu-gcc-ranlib aarch64-linux-gnu-gcc-ranlib /usr/bin/aarch64-linux-gnu-gcc-ranlib-10 \
+  --slave /usr/bin/aarch64-linux-gnu-gcov aarch64-linux-gnu-gcov /usr/bin/aarch64-linux-gnu-gcov-10 \
+  --slave /usr/bin/aarch64-linux-gnu-gcov-dump aarch64-linux-gnu-gcov-dump /usr/bin/aarch64-linux-gnu-gcov-dump-10 \
+  --slave /usr/bin/aarch64-linux-gnu-gcov-tool aarch64-linux-gnu-gcov-tool /usr/bin/aarch64-linux-gnu-gcov-tool-10
+
+$VVIRTLINUX/get-verified-tarball $(pwd) $VVIRTLINUX/keyring.gpg $LINUXVERSION
+
+LINUXTXZFILE=linux-$LINUXVERSION.tar.xz
+LINUXSIGFILE=linux-$LINUXVERSION.tar.asc
+[ -f $LINUXTXZFILE -a -f $LINUXSIGFILE ]
+
+mkdir linux
+tar -C linux -xf $LINUXTXZFILE --strip-components 1
+
+# first build arm64 (cross-compile)
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-gnu-
+
+# set variables for reproducible build
+export KBUILD_BUILD_TIMESTAMP=$(env LC_ALL=C date -r linux/COPYING)
+export KBUILD_BUILD_USER=user
+export KBUILD_BUILD_HOST=host
+
+# config and build
+cp $VVIRTLINUX/arch/$ARCH/defconfig linux/.config
+make -C linux olddefconfig
+make -C linux -j`nproc` Image
+echo -n "$MINISIGN_KEY_PASSWORD" | minisign -S -s $VVIRTLINUX/minisign.key -m linux/arch/arm64/boot/Image
+
+# make env var file describing this build
+cat <<EOF >| BUILDENVVARS
+LINUXVERSION=$LINUXVERSION
+LINUXTXZFILE=$LINUXTXZFILE
+LINUXSIGFILE=$LINUXSIGFILE
+EOF

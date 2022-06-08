@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: 0BSD
+# Copyright © 2021 Stephen Larew
+
+name: linux
+
+on:
+  schedule:
+    # run every hour
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      dobuild: ${{ steps.newrelease.outputs.dobuild }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          path: 'VVIRT-linux-builds'
+          fetch-depth: 0
+
+      - name: Check for new release
+        id: newrelease
+        shell: bash
+        run: |
+          LINUXVERSION=$(curl -sL 'https://www.kernel.org/finger_banner' | grep 'latest stable version' | awk -F: '{gsub(/ /,"", $0); print $2}')
+          if [ $(git -C ${{ github.workspace }}/VVIRT-linux-builds tag -l v"$LINUXVERSION") ]; then
+            echo '::set-output name=dobuild::no'
+          else
+            echo '::set-output name=dobuild::yes'
+          fi
+
+  build:
+    runs-on: ubuntu-20.04
+    needs: check
+    if: needs.check.outputs.dobuild == 'yes'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          path: 'VVIRT-linux-builds'
+
+      - name: Build Linux
+        shell: bash
+        env:
+          MINISIGN_KEY_PASSWORD: ${{ secrets.MINISIGN_KEY_PASSWORD }}
+        run: ${{ github.workspace }}/VVIRT-linux-builds/build ${{ github.workspace }}/VVIRT-linux-builds
+
+      - name: Set build env vars for release
+        run: cat BUILDENVVARS >> $GITHUB_ENV
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ env.LINUXVERSION }}
+          release_name: Linux ${{ env.LINUXVERSION }}
+          draft: false
+          prerelease: true
+          body: |-
+            Linux ${{ env.LINUXVERSION }}
+            
+            Linux is free software; you can redistribute it and/or modify it under the terms of version 2 of the GNU General Public License as published by the Free Software Foundation. Linux is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details. See the Linux Syscall Note for clarifications and exceptions.
+
+      - name: Upload license
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/VVIRT-linux-builds/LICENSES/linux_license
+          asset_name: linux-license
+          asset_content_type: text/plain
+
+      - name: Upload kernel source signature
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/${{ env.LINUXSIGFILE }}
+          asset_name: ${{ env.LINUXSIGFILE }}
+          asset_content_type: text/plain
+
+      - name: Upload kernel source
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/${{ env.LINUXTXZFILE}}
+          asset_name: ${{ env.LINUXTXZFILE}}
+          asset_content_type: application/octet-stream
+
+      - name: Upload kernel
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/linux/arch/arm64/boot/Image
+          asset_name: linux-kernel-image-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload kernel signature
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/linux/arch/arm64/boot/Image.minisig
+          asset_name: linux-kernel-image-arm64-minisig
+          asset_content_type: text/plain
+
+      - name: Upload kernel config
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/VVIRT-linux-builds/arch/arm64/defconfig
+          asset_name: linux-kernel-config-arm64
+          asset_content_type: text/plain
